@@ -9,6 +9,7 @@ from functools import wraps
 from flask import Flask, request
 import git
 from dotenv import load_dotenv
+from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError  # added
 
 app = Flask(__name__)
 application = app  # WSGI entrypoint
@@ -86,9 +87,12 @@ def handle_exception(e):
 @app.route('/git', methods=['POST'])
 @handle_errors
 def github_webhook():
-    # GitHub ping
-    if request.headers.get('X-GitHub-Event') == 'ping':
+    # Handle event type first
+    event = request.headers.get('X-GitHub-Event', '')
+    if event == 'ping':
         return 'pong', 200
+    if event and event != 'push':
+        return 'ignored (not a push event)', 200
 
     # Optional signature verification
     secret = os.getenv('WEBHOOK_SECRET')
@@ -99,11 +103,60 @@ def github_webhook():
         if not hmac.compare_digest(signature, expected_signature):
             return {"error": "Invalid signature"}, 401
 
+    # Only act on the configured branch (default: main)
+    payload = request.get_json(silent=True) or {}
+    target_branch = os.getenv('GIT_BRANCH', 'main')
+    if payload.get('ref') and payload['ref'] != f'refs/heads/{target_branch}':
+        return f"ignored (ref {payload.get('ref')} != refs/heads/{target_branch})", 200
+
     repo_path = os.getenv('REPO_PATH', os.path.expanduser('~/mysite'))
-    repo = git.Repo(repo_path)
-    origin = repo.remotes.origin
-    origin.pull()
-    return 'OK', 200
+
+    # Open repository safely
+    try:
+        repo = git.Repo(repo_path)
+    except (InvalidGitRepositoryError, NoSuchPathError) as e:
+        log_error_to_json(e, context={"stage": "open_repo", "repo_path": repo_path})
+        return {"error": "Invalid repository path", "repo_path": repo_path}, 500
+
+    # Update repository: fetch + checkout + hard reset
+    try:
+        origin = next((r for r in repo.remotes if r.name == 'origin'), None)
+        if origin is None:
+            return {"error": "Remote 'origin' not found"}, 500
+
+        # Fetch latest changes
+        origin.fetch(prune=True)
+
+        # Determine current branch; handle detached HEAD
+        try:
+            current_branch = repo.active_branch.name
+        except Exception:
+            current_branch = None
+
+        # Ensure we are on the target branch locally
+        if target_branch not in repo.heads:
+            # Create local branch tracking origin/<branch>
+            repo.git.checkout('-B', target_branch, f'origin/{target_branch}')
+        elif current_branch != target_branch:
+            repo.git.checkout(target_branch)
+
+        # Force sync with origin/<branch> to avoid merge conflicts/prompts
+        repo.git.reset('--hard', f'origin/{target_branch}')
+
+        return 'OK', 200
+    except GitCommandError as e:
+        # Log stdout/stderr if available
+        log_error_to_json(e, context={
+            "stage": "git_update",
+            "stderr": getattr(e, 'stderr', ''),
+            "stdout": getattr(e, 'stdout', ''),
+            "repo_path": repo_path,
+            "branch": target_branch,
+        })
+        return {"error": "Git update failed", "message": str(e)}, 500
+    except Exception as e:
+        log_error_to_json(e, context={"stage": "git_update_unknown", "repo_path": repo_path})
+        return {"error": "Unexpected error during git update", "message": str(e)}, 500
 
 # Backward-compatible endpoint (optional)
 @app.route('/update_server', methods=['POST'])
