@@ -31,3 +31,7 @@ def webhook():
     origin = repo.remotes.origin
     origin.pull()
     return 'Updated PythonAnywhere successfully', 200
+
+@app.route('/')
+def home():
+    return "Hello Webhook"
