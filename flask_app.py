@@ -99,7 +99,7 @@ def github_webhook():
         if not hmac.compare_digest(signature, expected_signature):
             return {"error": "Invalid signature"}, 401
 
-    repo_path = os.getenv('REPO_PATH', os.path.expanduser('~/instagram-lite'))
+    repo_path = os.getenv('REPO_PATH', os.path.expanduser('~/mysite'))
     repo = git.Repo(repo_path)
     origin = repo.remotes.origin
     origin.pull()
