@@ -24,4 +24,4 @@ def webhook():
 
 @app.route('/')
 def home():
-    return "Hello Webhook1"
+    return "Hello Webhook2"
