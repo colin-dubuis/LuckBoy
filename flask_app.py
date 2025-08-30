@@ -276,6 +276,13 @@ def clear_errors():
         <a href="/view-errors">Back to Error Logs</a>
         """
 
+@app.route('/LuckyBoy')
+def luckyBoy():
+    html = """
+    <h1> Site underconstruction </h1>
+    """
+    return html
+
 # ---------------- Home ----------------
 @app.route('/')
 def home():
@@ -286,6 +293,9 @@ def home():
     </p>
     <p>
         <a href="test" class="refresh-btn">Create Errors</a> 
-    </p>"
+    </p>
+    <p>
+        <a href="Luckyboy" class="refresh-btn">Let's go to the website!</a> 
+    </p>
     """
     return html
