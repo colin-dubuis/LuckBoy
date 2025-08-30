@@ -13,24 +13,14 @@ WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET').encode()  # convert to bytes
 
 @app.route('/update_server', methods=['POST'])
 def webhook():
-    # Get signature from GitHub header
-    signature = request.headers.get('X-Hub-Signature-256')
-    if signature is None:
-        abort(400, 'Signature missing')
-
-    # Compute HMAC SHA256 of payload
-    mac = hmac.new(WEBHOOK_SECRET, msg=request.data, digestmod=hashlib.sha256)
-    expected_signature = 'sha256=' + mac.hexdigest()
-
-    # Compare GitHub signature with expected signature
-    if not hmac.compare_digest(signature, expected_signature):
-        abort(400, 'Invalid signature')
-
-    # If signature is valid, pull the repo
-    repo = git.Repo('/home/Warbird65/mysite')
-    origin = repo.remotes.origin
-    origin.pull()
-    return 'Updated PythonAnywhere successfully', 200
+    if request.method == 'POST':
+        repo = git.Repo('./myproject')
+        origin = repo.remotes.origin
+        repo.create_head('master',origin.refs.master).set_tracking_branch(origin.refs.master).checkout()
+        origin.pull()
+        return '', 200
+    else:
+        return '', 400
 
 @app.route('/')
 def home():
