@@ -15,6 +15,7 @@ A lightweight social‑media clone where users can register, upload a photo with
 - [Folder Structure](#folder-structure)
 - [Future Improvements](#future-improvements)
 - [License](#license)
+- [Error Logging](#error-logging)
 
 ## Project Overview
 The application mimics the core flow of Instagram:
@@ -239,6 +240,19 @@ instagram-lite/
 - Dockerfile – containerised development & easier deployment to other hosts
 - Frontend SPA – React/Vue with a Flask REST API
 - Email verification & password reset
+
+## Error Logging
+Basic JSON error logging is enabled:
+- Logs file: logs/errors.json (auto-created; git-ignored)
+- View logs: GET /view-errors
+- Clear logs: GET /clear-errors
+- Test success: GET /test
+- Test error: GET /error
+
+Webhook endpoint:
+- Payload URL: https://<your-username>.pythonanywhere.com/git
+- Optional secret: set WEBHOOK_SECRET in env and in GitHub webhook settings
+- Optional repo path: set REPO_PATH (defaults to ~/instagram-lite)
 
 ## License
 This project is released under the MIT License – feel free to fork, modify, and deploy it as you wish.

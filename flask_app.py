@@ -226,4 +226,4 @@ def clear_errors():
 # ---------------- Home ----------------
 @app.route('/')
 def home():
-    return "Hello Webhook2"
+    return ('<h1> Hello Webhook2 </h1> <p><a href="view-errors" class="refresh-btn">See Errors</a> </p>"')
