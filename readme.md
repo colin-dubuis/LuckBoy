@@ -7,7 +7,7 @@ A lightweight social‑media clone where users can register, upload a photo with
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Prerequisites](#prerequisites)
-- [Setup and Local Development](#setup-and-local-development)
+- [Setup – Local Development](#setup--local-development)
 - [Deploy to PythonAnywhere](#deploy-to-pythonanywhere)
 - [Cloudflare R2 Integration](#cloudflare-r2-integration)
 - [Database Schema](#database-schema)
@@ -54,7 +54,7 @@ Everything runs on Flask, uses Flask‑Login for authentication, Flask‑SQLAlch
 - Cloudflare account with an R2 bucket
 - Optional: virtualenv or conda for isolated dependencies
 
-## Setup and Local Development
+## Setup – Local Development
 1) Clone the repo
 ```bash
 git clone https://github.com/<your-username>/instagram-lite.git
