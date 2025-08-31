@@ -201,14 +201,24 @@ def test_email():
                 pass
 
         resp = sg.send(message)
+        body_raw = getattr(resp, 'body', b'')
+        body_str = body_raw.decode() if isinstance(body_raw, (bytes, bytearray)) else str(body_raw or '')
         return {
             "status_code": resp.status_code,
             "headers": dict(resp.headers or {}),
+            "body": body_str[:500],
             "note": "202 means accepted by SendGrid."
         }, 200
     except Exception as e:
-        err_id = log_error_to_json(e, context={"route": "test_email", "to": to})
-        return {"error": "SendGrid send failed", "message": str(e), "error_id": err_id}, 500
+        err_id = log_error_to_json(e, context={"route": "test_email", "to": to, "sendgrid_detail": getattr(e, 'body', None)})
+        return {
+            "error": "SendGrid send failed",
+            "message": str(e),
+            "sendgrid_detail": (getattr(e, 'body', b'').decode(errors='ignore')
+                                if isinstance(getattr(e, 'body', None), (bytes, bytearray))
+                                else str(getattr(e, 'body', None))),
+            "error_id": err_id
+        }, 500
 
 #-------------- Auth -----------------
 # python
@@ -292,25 +302,25 @@ def send_verification_email(to_email: str, token: str):
     )
 
     sg = SendGridAPIClient(api_key)
-    # Optional EU data residency
     region = (os.getenv('SENDGRID_REGION') or '').lower()
     if region in ('eu', 'eu1', 'eu_region'):
         try:
             sg.set_sendgrid_data_residency("eu")
         except Exception:
-            # non-fatal
             pass
 
     try:
         resp = sg.send(message)
-        # Accept 200/202 as success
+        body_raw = getattr(resp, 'body', b'')
+        body_str = body_raw.decode() if isinstance(body_raw, (bytes, bytearray)) else str(body_raw or '')
         if resp.status_code not in (200, 202):
-            # Include safe response details
-            raise RuntimeError(f"SendGrid send failed (status={resp.status_code})")
-        return {"status_code": resp.status_code, "headers": dict(resp.headers or {})}
+            raise RuntimeError(f"SendGrid send failed (status={resp.status_code}): {body_str[:300]}")
+        return {"status_code": resp.status_code, "headers": dict(resp.headers or {}), "body": body_str[:500]}
     except Exception as e:
-        # Re-raise with context; caller will log
-        raise RuntimeError(f"SendGrid error: {e}") from e
+        err_detail = getattr(e, 'body', None)
+        if isinstance(err_detail, (bytes, bytearray)):
+            err_detail = err_detail.decode(errors='ignore')
+        raise RuntimeError(f"SendGrid error: {str(e)}; detail: {str(err_detail)[:500] if err_detail else 'n/a'}") from e
 
 @app.route('/verify-email', methods=['GET'])
 @handle_errors
