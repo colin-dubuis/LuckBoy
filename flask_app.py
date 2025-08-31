@@ -207,6 +207,16 @@ def github_webhook():
 def test_route():
     return {"message": "Success"}
 
+@app.route('/test-env')
+@handle_errors
+def test_env():
+    return {
+        "DB_HOST": os.getenv('DB_HOST'),
+        "DB_USER": os.getenv('DB_USER'),
+        "DB_NAME": os.getenv('DB_NAME'),
+        "DB_PASSWORD": "***hidden***" if os.getenv('DB_PASSWORD') else None
+    }
+
 
 # 🔑 **NEW: Database Test Route**
 @app.route('/test-db')
