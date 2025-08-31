@@ -30,6 +30,9 @@ def require_env(key: str) -> str:
 app = Flask(__name__)
 application = app  # WSGI entrypoint
 
+# Session secret (use env if set)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-insecure-change-me')
+
 DB_HOST = require_env('DB_HOST')
 DB_USER = require_env('DB_USER')
 DB_PASSWORD = require_env('DB_PASSWORD')
@@ -41,6 +44,33 @@ app.config['SQLALCHEMY_DATABASE_URI'] = (
 )
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280}
 db = SQLAlchemy(app)
+
+# Auth setup
+bcrypt = Bcrypt(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+login_manager.session_protection = 'strong'
+
+# Map existing users table (no schema change)
+class User(UserMixin, db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+
+    def check_password(self, password: str) -> bool:
+        try:
+            return bcrypt.check_password_hash(self.password_hash, password)
+        except Exception:
+            return False
+
+@login_manager.user_loader
+def load_user(user_id):
+    try:
+        return db.session.get(User, int(user_id))
+    except Exception:
+        return None
 
 # ---------------- Error logging utilities ----------------
 def log_error_to_json(error, context=None):
@@ -133,6 +163,64 @@ def show_users():
 
 
 
+# Register
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'GET':
+        return render_template('register.html')
+
+    username = (request.form.get('username') or '').strip()
+    email = (request.form.get('email') or '').strip().lower()
+    password = request.form.get('password') or ''
+
+    if not username or not email or not password:
+        flash('All fields are required.', 'danger')
+        return redirect(url_for('register'))
+
+    # Check uniqueness
+    existing = db.session.execute(
+        db.select(User).where((User.username == username) | (User.email == email))
+    ).scalars().first()
+    if existing:
+        flash('Username or email already in use.', 'danger')
+        return redirect(url_for('register'))
+
+    pw_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+    user = User(username=username, email=email, password_hash=pw_hash)
+    db.session.add(user)
+    db.session.commit()
+    flash('Account created. You can now log in.', 'success')
+    return redirect(url_for('login'))
+
+# Login
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'GET':
+        return render_template('login.html')
+
+    username = (request.form.get('username') or '').strip()
+    password = request.form.get('password') or ''
+
+    user = db.session.execute(
+        db.select(User).where(User.username == username)
+    ).scalars().first()
+
+    if not user or not user.check_password(password):
+        flash('Invalid username or password.', 'danger')
+        return redirect(url_for('login'))
+
+    login_user(user)
+    flash('Welcome back!', 'success')
+    return redirect(url_for('home'))
+
+# Logout
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('login'))
+
 # ------------------------
 # Routes
 # ------------------------
@@ -219,50 +307,7 @@ def github_webhook():
 
 
 # ---------------- Demo/diagnostic routes ----------------
-@app.route('/test')
-@handle_errors
-def test_route():
-    return {"message": "Success"}
 
-@app.route('/test-env')
-@handle_errors
-def test_env():
-    return {
-        "DB_HOST": os.getenv('DB_HOST'),
-        "DB_USER": os.getenv('DB_USER'),
-        "DB_NAME": os.getenv('DB_NAME'),
-        "DB_PASSWORD": "***hidden***" if os.getenv('DB_PASSWORD') else None
-    }
-
-
-# 🔑 **NEW: Database Test Route**
-@app.route('/test-db')
-@handle_errors
-def test_database():
-    """
-    Test database connection
-    """
-    try:
-        # Try to query the database
-        user_count = User.query.count()
-
-        return {
-            "status": "success",
-            "message": "Database connection working!",
-            "users_count": user_count,
-            "errors_count": error_count
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Database connection failed: {str(e)}"
-        }, 500
-
-@app.route('/error')
-@handle_errors
-def error_route():
-    _ = 1 / 0  # intentional error
-    return {"result": _}
 
 @app.route('/view-errors')
 def view_errors():
@@ -372,5 +417,6 @@ def luckyBoy():
 
 # ---------------- Home ----------------
 @app.route('/')
+@login_required
 def home():
     return render_template('home.html')
