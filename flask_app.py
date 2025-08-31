@@ -17,6 +17,9 @@ from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_sqlalchemy import SQLAlchemy
 
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+
 
 # Load .env deterministically from the directory of this file
 ENV_PATH = Path(__file__).resolve().parent / '.env'
@@ -139,10 +142,73 @@ def handle_exception(e):
     return {"error": "Internal Server Error", "message": str(e)}, 500
 
 
+#--------------Email------------------
+# --- new route: test SendGrid email ---
+@app.route('/test-email', methods=['GET', 'POST'])
+@login_required
+@handle_errors
+def test_email():
+    # Simple form to submit a recipient; prefill with current user's email
+    if request.method == 'GET':
+        default_to = getattr(current_user, 'email', '') or ''
+        return f"""
+        <!doctype html>
+        <html><head><title>SendGrid Test</title></head>
+        <body style="font-family: sans-serif; padding: 20px;">
+            <h1>SendGrid Test</h1>
+            <form method="POST">
+                <label>To email:</label>
+                <input name="to" type="email" required value="{default_to}" />
+                <button type="submit">Send test email</button>
+            </form>
+            <p><a href="/">Back to Home</a></p>
+        </body></html>
+        """
+
+    # POST: send the email
+    to = (request.form.get('to') or '').strip()
+    if not to:
+        return {"error": "Missing 'to' address"}, 400
+
+    api_key = os.getenv('SENDGRID_API_KEY')
+    if not api_key:
+        return {"error": "Missing SENDGRID_API_KEY"}, 500
+
+    from_email = os.getenv('MAIL_FROM', 'no-reply@example.com')
+
+    message = Mail(
+        from_email=from_email,
+        to_emails=to,
+        subject='SendGrid test from Flask',
+        html_content='<strong>If you see this, SendGrid works.</strong>'
+    )
+
+    try:
+        sg = SendGridAPIClient(api_key)
+
+        # Optional EU data residency
+        region = (os.getenv('SENDGRID_REGION') or '').lower()
+        if region in ('eu', 'eu1', 'eu_region'):
+            try:
+                sg.set_sendgrid_data_residency("eu")
+            except Exception:
+                # Non-fatal; continue without regional setting
+                pass
+
+        resp = sg.send(message)
+        return {
+            "status_code": resp.status_code,
+            "note": "If status_code is 202, SendGrid accepted the email."
+        }, 200
+    except Exception as e:
+        log_error_to_json(e, context={"route": "test_email", "to": to})
+        return {"error": "SendGrid send failed", "message": str(e)}, 500
+
 #-------------- Auth -----------------
 
 @app.route('/users')
 @handle_errors
+@login_required
 def show_users():
     try:
         # Simple SQL query
