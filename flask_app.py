@@ -20,6 +20,9 @@ from flask_sqlalchemy import SQLAlchemy
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
+import secrets
+from datetime import datetime, timedelta
+
 
 # Load .env deterministically from the directory of this file
 ENV_PATH = Path(__file__).resolve().parent / '.env'
@@ -205,6 +208,17 @@ def test_email():
         return {"error": "SendGrid send failed", "message": str(e)}, 500
 
 #-------------- Auth -----------------
+# python
+class EmailVerification(db.Model):
+    __tablename__ = 'email_verifications'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    token = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+    user = db.relationship('User', backref=db.backref('verifications', lazy='dynamic'))
+
 
 @app.route('/users')
 @handle_errors
@@ -229,7 +243,90 @@ def show_users():
 
 
 
-# Register
+# Ensure the new table exists (no-op if already created)
+@app.before_request
+def _ensure_tables():
+    if not getattr(app, '_db_ready', False):
+        db.create_all()
+        app._db_ready = True
+
+def is_user_verified(user_id: int) -> bool:
+    row = db.session.execute(
+        db.select(EmailVerification.id)
+          .where(EmailVerification.user_id == user_id, EmailVerification.used_at.isnot(None))
+          .limit(1)
+    ).first()
+    return bool(row)
+
+def _new_verification_token(user) -> str:
+    token = secrets.token_urlsafe(32)
+    ev = EmailVerification(
+        user_id=user.id,
+        token=token,
+        expires_at=datetime.utcnow() + timedelta(minutes=5),
+    )
+    db.session.add(ev)
+    db.session.commit()
+    return token
+
+def send_verification_email(to_email: str, token: str):
+    api_key = os.getenv('SENDGRID_API_KEY')
+    if not api_key:
+        raise RuntimeError('Missing SENDGRID_API_KEY')
+
+    from_email = os.getenv('MAIL_FROM', 'no-reply@example.com')
+    verify_url = url_for('verify_email', token=token, _external=True)
+
+    message = Mail(
+        from_email=from_email,
+        to_emails=to_email,
+        subject='Verify your email (expires in 5 minutes)',
+        html_content=f'''
+            <p>Click to verify your email (valid 5 minutes):</p>
+            <p><a href="{verify_url}">{verify_url}</a></p>
+            <p>If you did not sign up, ignore this email.</p>
+        '''
+    )
+
+    sg = SendGridAPIClient(api_key)
+    region = (os.getenv('SENDGRID_REGION') or '').lower()
+    if region in ('eu', 'eu1', 'eu_region'):
+        try:
+            sg.set_sendgrid_data_residency("eu")
+        except Exception:
+            pass
+    sg.send(message)
+
+@app.route('/verify-email', methods=['GET'])
+@handle_errors
+def verify_email():
+    token = (request.args.get('token') or '').strip()
+    if not token:
+        flash('Missing token.', 'danger')
+        return redirect(url_for('login'))
+
+    ev = db.session.execute(
+        db.select(EmailVerification).where(EmailVerification.token == token)
+    ).scalars().first()
+
+    if not ev:
+        flash('Invalid token.', 'danger')
+        return redirect(url_for('login'))
+
+    now = datetime.utcnow()
+    if ev.used_at is not None:
+        flash('Token already used.', 'warning')
+        return redirect(url_for('login'))
+    if now > ev.expires_at:
+        flash('Token expired. A new link can be requested by logging in again.', 'danger')
+        return redirect(url_for('login'))
+
+    ev.used_at = now
+    db.session.commit()
+    flash('Email verified. You can now log in.', 'success')
+    return redirect(url_for('login'))
+
+# Update: Register route – send verification email and require verification
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'GET':
@@ -243,7 +340,6 @@ def register():
         flash('All fields are required.', 'danger')
         return redirect(url_for('register'))
 
-    # Check uniqueness
     existing = db.session.execute(
         db.select(User).where((User.username == username) | (User.email == email))
     ).scalars().first()
@@ -255,10 +351,18 @@ def register():
     user = User(username=username, email=email, password_hash=pw_hash)
     db.session.add(user)
     db.session.commit()
-    flash('Account created. You can now log in.', 'success')
+
+    try:
+        token = _new_verification_token(user)
+        send_verification_email(user.email, token)
+        flash('Account created. Check your inbox to verify your email (valid 5 minutes).', 'success')
+    except Exception as e:
+        log_error_to_json(e, context={'stage': 'send_verification', 'email': email})
+        flash('Account created, but sending the verification email failed. Try logging in to resend.', 'warning')
+
     return redirect(url_for('login'))
 
-# Login
+# Update: Login route – block until verified and resend a token
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
@@ -273,6 +377,16 @@ def login():
 
     if not user or not user.check_password(password):
         flash('Invalid username or password.', 'danger')
+        return redirect(url_for('login'))
+
+    if not is_user_verified(user.id):
+        try:
+            token = _new_verification_token(user)
+            send_verification_email(user.email, token)
+            flash('Please verify your email. A new verification link was sent (valid 5 minutes).', 'warning')
+        except Exception as e:
+            log_error_to_json(e, context={'stage': 'resend_verification', 'user_id': user.id})
+            flash('Your email is not verified and resending the link failed. Try again later.', 'danger')
         return redirect(url_for('login'))
 
     login_user(user)
