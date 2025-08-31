@@ -151,6 +151,7 @@ def handle_exception(e):
 #--------------Email------------------
 # --- new route: test SendGrid email ---
 @app.route('/test-email', methods=['GET', 'POST'])
+
 @handle_errors
 def test_email():
     # Simple form to submit a recipient; prefill with current user's email
@@ -177,9 +178,7 @@ def test_email():
 
     api_key = os.getenv('SENDGRID_API_KEY')
     if not api_key:
-        err = RuntimeError("SENDGRID_API_KEY is missing")
-        err_id = log_error_to_json(err, context={"route": "test_email"})
-        return {"error": "Missing SENDGRID_API_KEY", "error_id": err_id}, 500
+        return {"error": "Missing SENDGRID_API_KEY"}, 500
 
     from_email = os.getenv('MAIL_FROM', 'no-reply@example.com')
 
@@ -192,32 +191,24 @@ def test_email():
 
     try:
         sg = SendGridAPIClient(api_key)
+
+        # Optional EU data residency
         region = (os.getenv('SENDGRID_REGION') or '').lower()
         if region in ('eu', 'eu1', 'eu_region'):
             try:
                 sg.set_sendgrid_data_residency("eu")
             except Exception:
+                # Non-fatal; continue without regional setting
                 pass
 
         resp = sg.send(message)
-        body_raw = getattr(resp, 'body', b'')
-        body_str = body_raw.decode() if isinstance(body_raw, (bytes, bytearray)) else str(body_raw or '')
         return {
             "status_code": resp.status_code,
-            "headers": dict(resp.headers or {}),
-            "body": body_str[:500],
-            "note": "202 means accepted by SendGrid."
+            "note": "If status_code is 202, SendGrid accepted the email."
         }, 200
     except Exception as e:
-        err_id = log_error_to_json(e, context={"route": "test_email", "to": to, "sendgrid_detail": getattr(e, 'body', None)})
-        return {
-            "error": "SendGrid send failed",
-            "message": str(e),
-            "sendgrid_detail": (getattr(e, 'body', b'').decode(errors='ignore')
-                                if isinstance(getattr(e, 'body', None), (bytes, bytearray))
-                                else str(getattr(e, 'body', None))),
-            "error_id": err_id
-        }, 500
+        log_error_to_json(e, context={"route": "test_email", "to": to})
+        return {"error": "SendGrid send failed", "message": str(e)}, 500
 
 #-------------- Auth -----------------
 # python
