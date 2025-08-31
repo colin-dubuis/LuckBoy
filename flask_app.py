@@ -22,6 +22,7 @@ from sendgrid.helpers.mail import Mail
 
 import secrets
 from datetime import datetime, timedelta
+from uuid import uuid4  # added
 
 
 # Load .env deterministically from the directory of this file
@@ -89,7 +90,9 @@ def log_error_to_json(error, context=None):
 
     log_file = os.path.join(log_dir, "errors.json")
 
+    error_id = uuid4().hex[:10]  # short correlation id
     error_data = {
+        "error_id": error_id,
         "timestamp": datetime.now().isoformat(),
         "error_type": type(error).__name__,
         "error_message": str(error),
@@ -115,11 +118,11 @@ def log_error_to_json(error, context=None):
     try:
         with open(log_file, 'w') as f:
             json.dump(errors, f, indent=2, default=str)
-        return True
+        return error_id  # changed: return correlation id
     except Exception as write_error:
         print(f"Failed to write to log file: {write_error}")
         print(f"Original error: {error_data}")
-        return False
+        return None
 
 
 def handle_errors(func):
@@ -131,8 +134,8 @@ def handle_errors(func):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            log_error_to_json(e, context={"function": func.__name__})
-            return {"error": "An error occurred", "message": str(e)}, 500
+            err_id = log_error_to_json(e, context={"function": func.__name__})
+            return {"error": "An error occurred", "message": str(e), "error_id": err_id}, 500
     return wrapper
 
 
@@ -141,8 +144,8 @@ def handle_exception(e):
     """
     Global error handler for Flask app.
     """
-    log_error_to_json(e)
-    return {"error": "Internal Server Error", "message": str(e)}, 500
+    err_id = log_error_to_json(e)
+    return {"error": "Internal Server Error", "message": str(e), "error_id": err_id}, 500
 
 
 #--------------Email------------------
@@ -175,7 +178,9 @@ def test_email():
 
     api_key = os.getenv('SENDGRID_API_KEY')
     if not api_key:
-        return {"error": "Missing SENDGRID_API_KEY"}, 500
+        err = RuntimeError("SENDGRID_API_KEY is missing")
+        err_id = log_error_to_json(err, context={"route": "test_email"})
+        return {"error": "Missing SENDGRID_API_KEY", "error_id": err_id}, 500
 
     from_email = os.getenv('MAIL_FROM', 'no-reply@example.com')
 
@@ -188,24 +193,22 @@ def test_email():
 
     try:
         sg = SendGridAPIClient(api_key)
-
-        # Optional EU data residency
         region = (os.getenv('SENDGRID_REGION') or '').lower()
         if region in ('eu', 'eu1', 'eu_region'):
             try:
                 sg.set_sendgrid_data_residency("eu")
             except Exception:
-                # Non-fatal; continue without regional setting
                 pass
 
         resp = sg.send(message)
         return {
             "status_code": resp.status_code,
-            "note": "If status_code is 202, SendGrid accepted the email."
+            "headers": dict(resp.headers or {}),
+            "note": "202 means accepted by SendGrid."
         }, 200
     except Exception as e:
-        log_error_to_json(e, context={"route": "test_email", "to": to})
-        return {"error": "SendGrid send failed", "message": str(e)}, 500
+        err_id = log_error_to_json(e, context={"route": "test_email", "to": to})
+        return {"error": "SendGrid send failed", "message": str(e), "error_id": err_id}, 500
 
 #-------------- Auth -----------------
 # python
@@ -272,7 +275,7 @@ def _new_verification_token(user) -> str:
 def send_verification_email(to_email: str, token: str):
     api_key = os.getenv('SENDGRID_API_KEY')
     if not api_key:
-        raise RuntimeError('Missing SENDGRID_API_KEY')
+        raise RuntimeError('SENDGRID_API_KEY is missing')
 
     from_email = os.getenv('MAIL_FROM', 'no-reply@example.com')
     verify_url = url_for('verify_email', token=token, _external=True)
@@ -289,20 +292,34 @@ def send_verification_email(to_email: str, token: str):
     )
 
     sg = SendGridAPIClient(api_key)
+    # Optional EU data residency
     region = (os.getenv('SENDGRID_REGION') or '').lower()
     if region in ('eu', 'eu1', 'eu_region'):
         try:
             sg.set_sendgrid_data_residency("eu")
         except Exception:
+            # non-fatal
             pass
-    sg.send(message)
+
+    try:
+        resp = sg.send(message)
+        # Accept 200/202 as success
+        if resp.status_code not in (200, 202):
+            # Include safe response details
+            raise RuntimeError(f"SendGrid send failed (status={resp.status_code})")
+        return {"status_code": resp.status_code, "headers": dict(resp.headers or {})}
+    except Exception as e:
+        # Re-raise with context; caller will log
+        raise RuntimeError(f"SendGrid error: {e}") from e
 
 @app.route('/verify-email', methods=['GET'])
 @handle_errors
 def verify_email():
     token = (request.args.get('token') or '').strip()
     if not token:
-        flash('Missing token.', 'danger')
+        # log and surface correlation id
+        err_id = log_error_to_json(ValueError('Missing token'), context={'route': 'verify_email'})
+        flash(f'Missing token. Error ID: {err_id}', 'danger')
         return redirect(url_for('login'))
 
     ev = db.session.execute(
@@ -310,15 +327,18 @@ def verify_email():
     ).scalars().first()
 
     if not ev:
-        flash('Invalid token.', 'danger')
+        err_id = log_error_to_json(ValueError('Invalid token'), context={'route': 'verify_email', 'token_preview': token[:6]})
+        flash(f'Invalid token. Error ID: {err_id}', 'danger')
         return redirect(url_for('login'))
 
     now = datetime.utcnow()
     if ev.used_at is not None:
-        flash('Token already used.', 'warning')
+        err_id = log_error_to_json(ValueError('Token already used'), context={'route': 'verify_email', 'ev_id': ev.id})
+        flash(f'Token already used. Error ID: {err_id}', 'warning')
         return redirect(url_for('login'))
     if now > ev.expires_at:
-        flash('Token expired. A new link can be requested by logging in again.', 'danger')
+        err_id = log_error_to_json(ValueError('Token expired'), context={'route': 'verify_email', 'ev_id': ev.id, 'expired_at': ev.expires_at.isoformat()})
+        flash(f'Token expired. Error ID: {err_id}. Log in to request a new link.', 'danger')
         return redirect(url_for('login'))
 
     ev.used_at = now
@@ -354,11 +374,12 @@ def register():
 
     try:
         token = _new_verification_token(user)
-        send_verification_email(user.email, token)
-        flash('Account created. Check your inbox to verify your email (valid 5 minutes).', 'success')
+        send_info = send_verification_email(user.email, token)
+        flash(f'Account created. Check your inbox to verify your email (valid 5 minutes). [SendGrid {send_info.get("status_code")}]', 'success')
     except Exception as e:
-        log_error_to_json(e, context={'stage': 'send_verification', 'email': email})
-        flash('Account created, but sending the verification email failed. Try logging in to resend.', 'warning')
+        err_id = log_error_to_json(e, context={'stage': 'send_verification', 'email': email, 'user_id': user.id})
+        safe_msg = str(e)[:200]
+        flash(f'Account created, but sending the verification email failed. Error ID: {err_id}. Cause: {safe_msg}', 'warning')
 
     return redirect(url_for('login'))
 
@@ -382,11 +403,12 @@ def login():
     if not is_user_verified(user.id):
         try:
             token = _new_verification_token(user)
-            send_verification_email(user.email, token)
-            flash('Please verify your email. A new verification link was sent (valid 5 minutes).', 'warning')
+            send_info = send_verification_email(user.email, token)
+            flash(f'Please verify your email. A new verification link was sent (valid 5 minutes). [SendGrid {send_info.get("status_code")}]', 'warning')
         except Exception as e:
-            log_error_to_json(e, context={'stage': 'resend_verification', 'user_id': user.id})
-            flash('Your email is not verified and resending the link failed. Try again later.', 'danger')
+            err_id = log_error_to_json(e, context={'stage': 'resend_verification', 'user_id': user.id})
+            safe_msg = str(e)[:200]
+            flash(f'Your email is not verified and resending the link failed. Error ID: {err_id}. Cause: {safe_msg}', 'danger')
         return redirect(url_for('login'))
 
     login_user(user)
