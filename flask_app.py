@@ -15,6 +15,8 @@ from flask_mysqldb import MySQL
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
+# Load .env before reading any env vars
+load_dotenv()
 app = Flask(__name__)
 application = app  # WSGI entrypoint
 
@@ -178,10 +180,6 @@ def logout():
     logout_user()
     flash("Logged out!", "info")
     return redirect(url_for('login'))
-
-# Load variables from .env (locally) or PA env panel
-load_dotenv()
-
 
 # ---------------- Webhook routes ----------------
 @app.route('/git', methods=['POST'])
