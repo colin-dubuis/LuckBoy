@@ -6,7 +6,6 @@ import traceback
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, request
 import git
 from dotenv import load_dotenv
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError  # added
