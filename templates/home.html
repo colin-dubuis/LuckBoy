@@ -13,13 +13,10 @@
     <div class="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between">
       <a href="{{ url_for('home') }}" class="text-xl font-semibold text-gray-900">MySite</a>
       <nav class="flex items-center gap-4 text-sm">
-        {% if current_user.is_authenticated %}
-          <a href="{{ url_for('dashboard') }}" class="text-gray-700 hover:text-indigo-600">Dashboard</a>
-          <a href="{{ url_for('logout') }}" class="text-gray-700 hover:text-indigo-600">Logout</a>
-        {% else %}
+
           <a href="{{ url_for('login') }}" class="text-gray-700 hover:text-indigo-600">Login</a>
           <a href="{{ url_for('register') }}" class="inline-flex items-center rounded-md bg-indigo-600 px-3 py-1.5 text-white hover:bg-indigo-700">Register</a>
-        {% endif %}
+
       </nav>
     </div>
   </header>
