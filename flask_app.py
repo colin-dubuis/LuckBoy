@@ -13,11 +13,17 @@ from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError 
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_sqlalchemy import SQLAlchemy
 
 # Load .env before reading any env vars
 load_dotenv()
 app = Flask(__name__)
 application = app  # WSGI entrypoint
+
+# Database setup
+app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}/{os.getenv('DB_NAME')}"
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280}
+db = SQLAlchemy(app)
 
 # ---------------- Error logging utilities ----------------
 def log_error_to_json(error, context=None):
@@ -88,7 +94,25 @@ def handle_exception(e):
 
 #-------------- Auth -----------------
 
+@app.route('/users')
+@handle_errors
+def show_users():
+    try:
+        # Simple SQL query
+        result = db.session.execute(db.text("SELECT id, username, email FROM users"))
+        users = result.fetchall()
 
+        html = "<h1>👥 Users in Database</h1>"
+        if users:
+            for user in users:
+                html += f"<p>🔸 ID: {user[0]} | Username: <strong>{user[1]}</strong> | Email: {user[2]}</p>"
+        else:
+            html += "<p>No users found</p>"
+
+        html += '<br><a href="/">← Back to Home</a>'
+        return html
+    except Exception as e:
+        return f"❌ Database Error: {str(e)}"
 
 
 
@@ -176,18 +200,36 @@ def github_webhook():
         log_error_to_json(e, context={"stage": "git_update_unknown", "repo_path": repo_path})
         return {"error": "Unexpected error during git update", "message": str(e)}, 500
 
-# Backward-compatible endpoint (optional)
-@app.route('/update_server', methods=['POST'])
-@handle_errors
-def update_server():
-    # Reuse the same logic
-    return github_webhook()
 
 # ---------------- Demo/diagnostic routes ----------------
 @app.route('/test')
 @handle_errors
 def test_route():
     return {"message": "Success"}
+
+
+# 🔑 **NEW: Database Test Route**
+@app.route('/test-db')
+@handle_errors
+def test_database():
+    """
+    Test database connection
+    """
+    try:
+        # Try to query the database
+        user_count = User.query.count()
+
+        return {
+            "status": "success",
+            "message": "Database connection working!",
+            "users_count": user_count,
+            "errors_count": error_count
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Database connection failed: {str(e)}"
+        }, 500
 
 @app.route('/error')
 @handle_errors
