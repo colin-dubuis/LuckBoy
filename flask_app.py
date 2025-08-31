@@ -11,8 +11,103 @@ import git
 from dotenv import load_dotenv
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError  # added
 
+from flask import Flask, render_template, request, redirect, url_for, flash
+from flask_mysqldb import MySQL
+from flask_bcrypt import Bcrypt
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+
 app = Flask(__name__)
 application = app  # WSGI entrypoint
+
+#-------------- Auth -----------------
+# MySQL configuration
+app.config['MYSQL_HOST'] = os.getenv("DB_HOST")
+app.config['MYSQL_USER'] = os.getenv("DB_USER")
+app.config['MYSQL_PASSWORD'] = os.getenv("DB_PASSWORD")
+app.config['MYSQL_DB'] = os.getenv("DB_NAME")
+
+mysql = MySQL(app)
+bcrypt = Bcrypt(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+# User class for Flask-Login
+class User(UserMixin):
+    def __init__(self, id, username, email):
+        self.id = id
+        self.username = username
+        self.email = email
+
+# Flask-Login user loader
+@login_manager.user_loader
+def load_user(user_id):
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT id, username, email FROM users WHERE id=%s", (user_id,))
+    result = cur.fetchone()
+    if result:
+        return User(*result)
+    return None
+
+# ------------------------
+# Routes
+# ------------------------
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        email = request.form['email']
+        password = request.form['password']
+        pw_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+
+        cur = mysql.connection.cursor()
+        try:
+            cur.execute("INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s)",
+                        (username, email, pw_hash))
+            mysql.connection.commit()
+            flash("User registered successfully!", "success")
+            return redirect(url_for('login'))
+        except:
+            flash("Username or email already exists!", "danger")
+            return redirect(url_for('register'))
+    return render_template('register.html')
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT id, username, email, password_hash FROM users WHERE username=%s", (username,))
+        result = cur.fetchone()
+        if result and bcrypt.check_password_hash(result[3], password):
+            user = User(result[0], result[1], result[2])
+            login_user(user)
+            flash("Logged in successfully!", "success")
+            return redirect(url_for('dashboard'))
+        else:
+            flash("Invalid credentials!", "danger")
+            return redirect(url_for('login'))
+
+    return render_template('login.html')
+
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    return f"Hello, {current_user.username}! This is your dashboard."
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash("Logged out!", "info")
+    return redirect(url_for('login'))
 
 # Load variables from .env (locally) or PA env panel
 load_dotenv()
@@ -295,7 +390,7 @@ def home():
         <a href="test" class="refresh-btn">Create Errors</a> 
     </p>
     <p>
-        <a href="Luckyboy" class="refresh-btn">Let's go to the website!</a> 
+        <a href="LuckyBoy" class="refresh-btn">Let's go to the website!</a> 
     </p>
     """
     return html
