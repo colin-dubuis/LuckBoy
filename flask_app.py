@@ -6,6 +6,8 @@ import traceback
 from datetime import datetime
 from functools import wraps
 
+from pathlib import Path
+
 import git
 from dotenv import load_dotenv
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError  # added
@@ -15,13 +17,28 @@ from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_sqlalchemy import SQLAlchemy
 
-# Load .env before reading any env vars
-load_dotenv()
+
+# Load .env deterministically from the directory of this file
+ENV_PATH = Path(__file__).resolve().parent / '.env'
+load_dotenv(dotenv_path=str(ENV_PATH), override=False)
+
+def require_env(key: str) -> str:
+    val = os.getenv(key)
+    if not val:
+        raise RuntimeError(f"Missing environment variable: {key}")
+    return val
 app = Flask(__name__)
 application = app  # WSGI entrypoint
 
+DB_HOST = require_env('DB_HOST')
+DB_USER = require_env('DB_USER')
+DB_PASSWORD = require_env('DB_PASSWORD')
+DB_NAME = require_env('DB_NAME')
+
 # Database setup
-app.config['SQLALCHEMY_DATABASE_URI'] = f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}/{os.getenv('DB_NAME')}"
+app.config['SQLALCHEMY_DATABASE_URI'] = (
+    f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}/{DB_NAME}"
+)
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle': 280}
 db = SQLAlchemy(app)
 
