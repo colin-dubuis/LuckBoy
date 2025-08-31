@@ -151,7 +151,6 @@ def handle_exception(e):
 #--------------Email------------------
 # --- new route: test SendGrid email ---
 @app.route('/test-email', methods=['GET', 'POST'])
-@login_required
 @handle_errors
 def test_email():
     # Simple form to submit a recipient; prefill with current user's email
