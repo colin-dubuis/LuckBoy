@@ -122,6 +122,11 @@ def load_user(user_id):
 # Routes
 # ------------------------
 
+@app.route('/favicon.ico')
+def favicon():
+    # No content; avoids 404s in logs
+    return '', 204, {'Content-Type': 'image/x-icon'}
+
 @app.route('/register', methods=['GET', 'POST'])
 @handle_errors
 def register():
