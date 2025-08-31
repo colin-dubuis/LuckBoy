@@ -53,6 +53,33 @@
         <p class="mt-4 text-xs text-gray-500">POST-only: /git</p>
       </section>
     </div>
+
+    <!-- All Routes -->
+    <section class="mt-8 bg-white shadow-sm border rounded-lg p-6">
+      <h2 class="text-lg font-semibold text-gray-900">All Routes</h2>
+      <div class="mt-4 overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="text-left text-gray-600">
+            <tr>
+              <th class="py-2 pr-4">Path</th>
+              <th class="py-2 pr-4">Endpoint</th>
+              <th class="py-2">Methods</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            {% for r in routes %}
+              <tr>
+                <td class="py-2 pr-4 font-mono text-xs md:text-sm">{{ r.rule }}</td>
+                <td class="py-2 pr-4">{{ r.endpoint }}</td>
+                <td class="py-2">
+                  <span class="font-mono text-xs">{{ r.methods | join(', ') }}</span>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <!-- Footer -->
@@ -61,5 +88,7 @@
       <p> All rights reserved.</p>
     </div>
   </footer>
+
+  {{ home_button() | safe }}
 </body>
 </html>

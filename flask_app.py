@@ -478,11 +478,37 @@ def clear_errors():
 def luckyBoy():
     html = """
     <h1> Site underconstruction </h1>
+    <p><a href="/">← Back to Home</a></p>
     """
     return html
+
+# Helper injected into all templates: floating Home button
+@app.context_processor
+def inject_helpers():
+    def home_button():
+        return f'''
+        <a href="{url_for('home')}"
+           class="fixed bottom-4 left-4 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-white shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+           title="Back to Home">
+           ⬅ Home
+        </a>
+        '''
+    return dict(home_button=home_button)
 
 # ---------------- Home ----------------
 @app.route('/')
 @login_required
 def home():
-    return render_template('home.html')
+    # Build a list of routes automatically (exclude 'static')
+    routes = []
+    for rule in app.url_map.iter_rules():
+        if rule.endpoint == 'static':
+            continue
+        methods = sorted(m for m in rule.methods if m in ('GET', 'POST', 'PUT', 'DELETE', 'PATCH'))
+        routes.append({
+            "rule": rule.rule,
+            "endpoint": rule.endpoint,
+            "methods": methods
+        })
+    routes.sort(key=lambda r: (r["rule"], r["endpoint"]))
+    return render_template('home.html', routes=routes)
