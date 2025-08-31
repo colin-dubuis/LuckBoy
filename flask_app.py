@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from git.exc import GitCommandError, InvalidGitRepositoryError, NoSuchPathError  # added
 
 from flask import Flask, render_template, request, redirect, url_for, flash
-from flask_mysqldb import MySQL
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 
@@ -88,35 +87,10 @@ def handle_exception(e):
 
 
 #-------------- Auth -----------------
-# MySQL configuration
-app.config['MYSQL_HOST'] = os.getenv("DB_HOST")
-app.config['MYSQL_USER'] = os.getenv("DB_USER")
-app.config['MYSQL_PASSWORD'] = os.getenv("DB_PASSWORD")
-app.config['MYSQL_DB'] = os.getenv("DB_NAME")
 
-mysql = MySQL(app)
-bcrypt = Bcrypt(app)
 
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
 
-# User class for Flask-Login
-class User(UserMixin):
-    def __init__(self, id, username, email):
-        self.id = id
-        self.username = username
-        self.email = email
 
-# Flask-Login user loader
-@login_manager.user_loader
-def load_user(user_id):
-    cur = mysql.connection.cursor()
-    cur.execute("SELECT id, username, email FROM users WHERE id=%s", (user_id,))
-    result = cur.fetchone()
-    if result:
-        return User(*result)
-    return None
 
 # ------------------------
 # Routes
@@ -126,65 +100,6 @@ def load_user(user_id):
 def favicon():
     # No content; avoids 404s in logs
     return '', 204, {'Content-Type': 'image/x-icon'}
-
-@app.route('/register', methods=['GET', 'POST'])
-@handle_errors
-def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        email = request.form['email']
-        password = request.form['password']
-        pw_hash = bcrypt.generate_password_hash(password).decode('utf-8')
-
-        cur = mysql.connection.cursor()
-        try:
-            cur.execute("INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s)",
-                        (username, email, pw_hash))
-            mysql.connection.commit()
-            flash("User registered successfully!", "success")
-            return redirect(url_for('login'))
-        except:
-            flash("Username or email already exists!", "danger")
-            return redirect(url_for('register'))
-    return render_template('register.html')
-
-
-@app.route('/login', methods=['GET', 'POST'])
-@handle_errors
-def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-
-        cur = mysql.connection.cursor()
-        cur.execute("SELECT id, username, email, password_hash FROM users WHERE username=%s", (username,))
-        result = cur.fetchone()
-        if result and bcrypt.check_password_hash(result[3], password):
-            user = User(result[0], result[1], result[2])
-            login_user(user)
-            flash("Logged in successfully!", "success")
-            return redirect(url_for('dashboard'))
-        else:
-            flash("Invalid credentials!", "danger")
-            return redirect(url_for('login'))
-
-    return render_template('login.html')
-
-
-@app.route('/dashboard')
-@handle_errors
-@login_required
-def dashboard():
-    return f"Hello, {current_user.username}! This is your dashboard."
-
-
-@app.route('/logout')
-@handle_errors
-@login_required
-def logout():
-    logout_user()
-    flash("Logged out!", "info")
-    return redirect(url_for('login'))
 
 # ---------------- Webhook routes ----------------
 @app.route('/git', methods=['POST'])
@@ -389,38 +304,4 @@ def luckyBoy():
 # ---------------- Home ----------------
 @app.route('/')
 def home():
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Home</title>
-      <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        h1 { margin-bottom: 10px; }
-        h3 { margin-top: 20px; }
-        .link { display: inline-block; margin: 6px 0; }
-      </style>
-    </head>
-    <body>
-      <h1>Hello Webhook2</h1>
-    
-      <h3>Pages</h3>
-      <p class="link"><a href="/">Home</a></p>
-      <p class="link"><a href="/register">Register</a></p>
-      <p class="link"><a href="/login">Login</a></p>
-      <p class="link"><a href="/dashboard">Dashboard</a></p>
-      <p class="link"><a href="/logout">Logout</a></p>
-      <p class="link"><a href="/LuckyBoy">LuckyBoy</a></p>
-    
-      <h3>Diagnostics</h3>
-      <p class="link"><a href="/test">Test (JSON)</a></p>
-      <p class="link"><a href="/error">Trigger Error</a></p>
-      <p class="link"><a href="/view-errors">View Errors</a></p>
-      <p class="link"><a href="/clear-errors">Clear Errors</a></p>
-    
-      <h3>Webhooks</h3>
-      <p>POST-only endpoints (not clickable): /git, /update_server</p>
-    </body>
-    </html>
-    """
-    return html
+    return render_template('home.html')
